@@ -21,7 +21,7 @@ def main(args):
         os.makedirs("./weights")
 
     # 创建实验目录
-    exp_name = f"baseline.2_patch{args.patch_size}_dim{args.embed_dim}_depth{args.depth}_heads{args.num_heads}"
+    exp_name = f"model3_patch{args.patch_size}_dim{args.embed_dim}_depth{args.depth}_heads{args.num_heads}"
     exp_dir = os.path.join("./experiments", exp_name)
     weights_dir = os.path.join(exp_dir, "weights")
     os.makedirs(weights_dir, exist_ok=True)
@@ -34,31 +34,18 @@ def main(args):
     # 数据预处理
     data_transform = {
         "train": transforms.Compose([
-               # transforms.Resize(224),
-               transforms.RandomCrop(32, padding=4),  # 随机剪裁，适应CIFAR-10的32x32尺寸
-               transforms.RandomHorizontalFlip(),   # 水平翻转
-               transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),  # 颜色增强，增加数据多样性
-               transforms.RandomRotation(15),  # 添加旋转
-                transforms.RandomAffine(
-                    degrees=0,
-                    translate=(0.1, 0.1),  # 随机平移 10%
-                    scale=(0.9, 1.1)  # 随机缩放 0.9-1.1倍
-                ),
-               transforms.ToTensor(),
-               transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616]),
-                transforms.RandomErasing(  # 随机遮挡
-                    p=0.3,  # 30%的概率应用
-                    scale=(0.02, 0.15),  # 遮挡面积比例
-                    ratio=(0.3, 3.3),  # 遮挡宽高比
-                    value='random'  # 随机值填充
-                ),
-            ]),  # CIFAR-10 标准归一化参数
-
+                # transforms.Resize(224),
+                transforms.RandomCrop(32, padding=4),  # 适应CIFAR-10的32x32尺寸
+                transforms.RandomHorizontalFlip(),
+                transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),  # 颜色增强，增加数据多样性
+                transforms.RandomRotation(15),  # 添加旋转
+                transforms.ToTensor(),
+                transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616])]),  # CIFAR-10 标准归一化参数
         "val": transforms.Compose([
-               # transforms.Resize(224),
-               # transforms.CenterCrop(224),
-               transforms.ToTensor(),
-               transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616])])}
+                # transforms.Resize(224),
+                # transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616])])}
 
     # 使用CIFAR-10数据集
     train_dataset = datasets.CIFAR10(root='./data', train=True, download=True,
@@ -87,16 +74,17 @@ def main(args):
 
     model = VisionTransformer(
         img_size=32,  # CIFAR-10图像尺寸 32
-        patch_size=16,  # 基线模型patch大小
+        patch_size=8,
         in_c=3,
         num_classes=10,  # CIFAR-10类别数
-        embed_dim=768,  # 基线模型嵌入维度  256？
-        depth=12,  # 基线模型Block层数
-        num_heads=12,  # 基线模型注意力头数
+        embed_dim=384,
+        depth=8,  # 基线模型Block层数12  减少到8
+        num_heads=12,  # 基线模型注意力头数12
         mlp_ratio=4.0,
         qkv_bias=True,
-        drop_ratio=0.2,  # 基线Dropout比例0.1  增加到0.2
-        attn_drop_ratio=0.2,  # 增加到0.2
+        drop_ratio=0.2,   # 基线Dropout比例0.1
+        attn_drop_ratio=0.2,    #
+        drop_path_ratio=0.1,  # 添加stochastic depth
         representation_size=None,
         distilled=False
     ).to(device)
@@ -128,7 +116,7 @@ def main(args):
 
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = optim.SGD(pg, lr=args.lr, momentum=0.9, weight_decay=5E-5)
-    optimizer = optim.AdamW(pg, lr=args.lr, weight_decay=0.1, amsgrad=True)  # 从0.05增加到0.1
+    optimizer = optim.AdamW(pg, lr=args.lr, weight_decay=0.05)  # 从0.05增加到0.1
     #
     lf = lambda x: ((1 + math.cos(x * math.pi / args.epochs)) / 2) * (1 - args.lrf) + args.lrf  # cosine
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
@@ -153,7 +141,8 @@ def main(args):
                                                     optimizer=optimizer,
                                                     data_loader=train_loader,
                                                     device=device,
-                                                    epoch=epoch)
+                                                    epoch=epoch,
+                                                    accumulation_steps=args.accumulation_steps)  # 梯度累计
 
             scheduler.step()
 
@@ -162,13 +151,6 @@ def main(args):
                                          data_loader=val_loader,
                                          device=device,
                                          epoch=epoch)
-
-            # # 记录指标
-            # train_history["train_loss"].append(train_loss)
-            # train_history["train_acc"].append(train_acc)
-            # train_history["val_loss"].append(val_loss)
-            # train_history["val_acc"].append(val_acc)
-            # train_history["learning_rate"].append(optimizer.param_groups[0]["lr"])
 
             tags = ["train_loss", "train_acc", "val_loss", "val_acc", "learning_rate"]
             tb_writer.add_scalar(tags[0], train_loss, epoch)
@@ -224,13 +206,15 @@ if __name__ == '__main__':
     # 梯度累计
     parser.add_argument('--batch-size', type=int, default=64)
     parser.add_argument('--accumulation-steps', type=int, default=2)  # 相当于把batch=128分成两次来做
-    parser.add_argument('--lr', type=float, default=0.0005)         #0.0005
+
+    # parser.add_argument('--batch-size', type=int, default=128)
+    parser.add_argument('--lr', type=float, default=0.0003)
     parser.add_argument('--lrf', type=float, default=0.01)
 
     # 模型配置
-    parser.add_argument('--patch_size', type=int, default=16)
-    parser.add_argument('--embed_dim', type=int, default=768)
-    parser.add_argument('--depth', type=int, default=12)
+    parser.add_argument('--patch_size', type=int, default=8)
+    parser.add_argument('--embed_dim', type=int, default=384)
+    parser.add_argument('--depth', type=int, default=8)  # 从12改成8
     parser.add_argument('--num_heads', type=int, default=12)
 
     # 数据集所在根目录
