@@ -21,7 +21,7 @@ def main(args):
         os.makedirs("./weights")
 
     # 创建实验目录
-    exp_name = f"model3.2_patch{args.patch_size}_dim{args.embed_dim}_depth{args.depth}_heads{args.num_heads}"
+    exp_name = f"model3.3_patch{args.patch_size}_dim{args.embed_dim}_depth{args.depth}_heads{args.num_heads}"
     exp_dir = os.path.join("./experiments", exp_name)
     weights_dir = os.path.join(exp_dir, "weights")
     os.makedirs(weights_dir, exist_ok=True)
@@ -83,7 +83,7 @@ def main(args):
         mlp_ratio=4.0,
         qkv_bias=True,
         drop_ratio=0.2,   # 基线Dropout比例0.1
-        attn_drop_ratio=0.2,    #
+        attn_drop_ratio=0.2,
         drop_path_ratio=0.1,  # 添加stochastic depth
         representation_size=None,
         distilled=False
@@ -116,19 +116,10 @@ def main(args):
 
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = optim.SGD(pg, lr=args.lr, momentum=0.9, weight_decay=5E-5)
-    optimizer = optim.AdamW(pg, lr=args.lr, weight_decay=0.1)  # 从0.05增加到0.1
-    #
+    optimizer = optim.AdamW(pg, lr=args.lr, weight_decay=0.1, amsgrad=True )  # 从0.05增加到0.1
+
     lf = lambda x: ((1 + math.cos(x * math.pi / args.epochs)) / 2) * (1 - args.lrf) + args.lrf  # cosine
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
-
-    # 训练记录
-    # train_history = {
-    #     "train_loss": [],
-    #     "train_acc": [],
-    #     "val_loss": [],
-    #     "val_acc": [],
-    #     "learning_rate": []
-    # }
 
     best_val_acc = 0.0
     best_epoch = 0
@@ -165,12 +156,6 @@ def main(args):
                 best_epoch = epoch
                 torch.save(model.state_dict(), os.path.join(weights_dir, "best_model.pth"))
 
-            # 保存检查点
-            # torch.save(model.state_dict(), "./weights/model-{}.pth".format(epoch))
-
-            # 保存训练历史
-    # with open(os.path.join(exp_dir, "train_history.json"), 'w') as f:
-    #     json.dump(train_history, f, indent=4)
 
     print(f"\nTraining completed!")
     print(f"Best validation accuracy: {best_val_acc:.4f} at epoch {best_epoch}")
@@ -209,7 +194,7 @@ if __name__ == '__main__':
 
     # parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--lr', type=float, default=0.0003)
-    parser.add_argument('--lrf', type=float, default=0.01)
+    parser.add_argument('--lrf', type=float, default=0.001)
 
     # 模型配置
     parser.add_argument('--patch_size', type=int, default=8)
